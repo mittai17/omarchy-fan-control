@@ -4,7 +4,9 @@
   "name": "Fan & Thermal Control",
   "version": "1.0.0",
   "author": "mittai17",
-  "description": "Laptop & desktop CPU/GPU fan speed control and thermal monitoring. Features 3-level quick modes (Eco, Medium, Max), manual speed slider, and intelligent closed-loop temperature auto-regulation to maintain normal system temperatures.",
+  "description": "Laptop & desktop CPU/GPU fan speed control and thermal monitoring with 3-level quick presets, manual speed slider, and intelligent closed-loop temperature auto-regulation to maintain normal system temperatures.",
+  "repository": "https://github.com/mittai17/omarchy-fan-control",
+  "license": "MIT",
   "kinds": [
     "bar-widget"
   ],
