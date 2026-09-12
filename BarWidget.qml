@@ -8,30 +8,47 @@ BarWidget {
   id: root
   moduleName: "io.github.mittai17.fan-control"
 
-  readonly property string scriptPath: {
-    var u = Qt.resolvedUrl("fanctl.py").toString()
-    return u.replace(/^file:\/\//, "")
-  }
+  readonly property string scriptPath: Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py"
 
-  // Telemetry state
-  property var statusData: ({})
-  property int primaryRpm: Number(statusData.primary_rpm) || 0
-  property string primaryLabel: statusData.primary_label || "CPU Fan"
-  property int primaryPct: Number(statusData.primary_pct) || 0
-  property int secondaryRpm: Number(statusData.secondary_rpm) || 0
-  property string secondaryLabel: statusData.secondary_label || "GPU Fan"
-  property int secondaryPct: Number(statusData.secondary_pct) || 0
-  property bool hasDualFans: statusData.has_dual_fans === true
-  property real cpuTemp: Number(statusData.cpu_temp) || 0
-  property var gpuTemp: statusData.gpu_temp
-  property real maxTemp: Number(statusData.max_temp) || cpuTemp
-  property string mode: statusData.mode || "auto"
-  property int manualSpeed: Number(statusData.manual_speed) || 60
-  property int targetTemp: Number(statusData.target_temp) || 60
-  property string thermalState: statusData.thermal_state || "Normal"
-  property string thermalStateDesc: statusData.thermal_state_desc || ""
-  property string activeProfile: statusData.active_profile || "balanced"
-  property bool hasPwmWriteAccess: statusData.has_pwm_write_access === true
+  // Reactive telemetry properties
+  property int primaryRpm: 0
+  property string primaryLabel: "CPU Fan"
+  property int primaryPct: 0
+  property int secondaryRpm: 0
+  property string secondaryLabel: "GPU Fan"
+  property int secondaryPct: 0
+  property bool hasDualFans: true
+  property real cpuTemp: 0
+  property var gpuTemp: null
+  property real maxTemp: 0
+  property string mode: "auto"
+  property int manualSpeed: 60
+  property int targetTemp: 60
+  property string thermalState: "Normal"
+  property string thermalStateDesc: ""
+  property string activeProfile: "balanced"
+  property bool hasPwmWriteAccess: true
+
+  function updateData(data) {
+    if (!data || typeof data !== "object") return
+    root.primaryRpm = Number(data.primary_rpm) || 0
+    root.primaryLabel = data.primary_label || "CPU Fan"
+    root.primaryPct = Number(data.primary_pct) || 0
+    root.secondaryRpm = Number(data.secondary_rpm) || 0
+    root.secondaryLabel = data.secondary_label || "GPU Fan"
+    root.secondaryPct = Number(data.secondary_pct) || 0
+    root.hasDualFans = data.has_dual_fans === true
+    root.cpuTemp = Number(data.cpu_temp) || 0
+    root.gpuTemp = data.gpu_temp !== undefined ? data.gpu_temp : null
+    root.maxTemp = Number(data.max_temp) || root.cpuTemp
+    root.mode = data.mode || "auto"
+    root.manualSpeed = Number(data.manual_speed) || 60
+    root.targetTemp = Number(data.target_temp) || 60
+    root.thermalState = data.thermal_state || "Normal"
+    root.thermalStateDesc = data.thermal_state_desc || ""
+    root.activeProfile = data.active_profile || "balanced"
+    root.hasPwmWriteAccess = data.has_pwm_write_access === true
+  }
 
   // Panel management
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
@@ -70,7 +87,7 @@ BarWidget {
     function setAuto(): void { root.setAuto(root.targetTemp) }
   }
 
-  // Backend command execution with explicit python interpreter
+  // Backend command execution
   function setMode(newMode) {
     root.mode = newMode
     Quickshell.execDetached(["/usr/bin/python3", root.scriptPath, "set-mode", newMode])
@@ -98,37 +115,45 @@ BarWidget {
     else setMode("eco")
   }
 
-  function triggerRefresh() {
-    if (!sampler.running) {
-      sampler.running = true
-    }
+  property FileView statusFile: FileView {
+    id: statusFile
+    path: Quickshell.env("HOME") + "/.config/omarchy/fan-status.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.loadStatusFromFile(text())
+    onLoadFailed: {}
   }
 
-  // Live polling via SplitParser (single-line JSON per run)
-  Process {
-    id: sampler
-    command: ["/usr/bin/python3", root.scriptPath, "status"]
-    stdout: SplitParser {
-      onRead: function(line) {
-        var str = String(line).trim()
-        if (str.length === 0 || str.charAt(0) !== "{") return
-        try {
-          var data = JSON.parse(str)
-          if (data && typeof data === "object") {
-            root.statusData = data
-          }
-        } catch (e) {}
+  function loadStatusFromFile(content) {
+    try {
+      var raw = String((content !== undefined && content !== null) ? content : statusFile.text() || "").trim()
+      if (raw.length > 0 && raw.charAt(0) === "{") {
+        var data = JSON.parse(raw)
+        root.updateData(data)
       }
-    }
+    } catch (e) {}
+  }
+
+  // Polling fallback timer: re-reads every 1.5 seconds
+  Timer {
+    id: pollTimer
+    interval: 1500
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: statusFile.reload()
   }
 
   Timer {
     id: refreshTimer
-    interval: 2000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.triggerRefresh()
+    interval: 350
+    repeat: false
+    onTriggered: statusFile.reload()
+  }
+
+  function triggerRefresh() {
+    refreshTimer.restart()
   }
 
   // Visual formatting
