@@ -1,81 +1,103 @@
-# Fan & Thermal Control (Omarchy Shell Plugin)
+# 󰈐 Fan & Thermal Control
 
-An advanced fan speed and thermal control plugin for [Omarchy](https://omarchy.org/) (Quickshell) designed for laptops and desktops.
+**Universal CPU/GPU fan speed control and intelligent thermal regulation for [Omarchy](https://omarchy.org/) (Quickshell).**
 
-It provides real-time telemetry for CPU and GPU fans, instant 3-level quick mode switching, custom manual speed sliders, and intelligent closed-loop temperature auto-regulation to maintain system temperatures within a normal, safe range.
+Designed for laptops and desktop PCs, this plugin provides live fan telemetry on the Omarchy status bar, 3 instant quick presets, manual speed control, and an active closed-loop smart auto-maintainer to keep system temperatures cool and normal.
+
+![Preview](preview.png)
+
+---
 
 ## Features
 
-- 󰈐 **Universal Hardware Support**:
-  - Automatically detects CPU and GPU/chassis fans (`fan1_input`, `fan2_input`, etc.) from Linux `hwmon` sysfs.
-  - Supports ACPI platform profiles (`powerprofilesctl` / `/sys/firmware/acpi/platform_profile`) across HP, Lenovo, ASUS, Dell, Framework, and generic Linux systems.
-  - Supports direct hardware PWM duty control on desktop motherboards and controllable laptop fan interfaces.
-  - Reads CPU package & core thermals (`coretemp`, `k10temp`, `zenpower`, ACPI thermal zones) and discrete GPU temperatures (NVIDIA / AMD).
+- 󰈐 **Dual / Multi-Fan Hardware Detection**:
+  - Automatically reads CPU and GPU/chassis fan RPMs (`fan1_input`, `fan2_input`, etc.) from Linux kernel `hwmon` sysfs.
+  - Dynamically calculates fan speed percentages and monitors dual-fan balances.
 - ⚡ **3 Simple Levels (Quick Presets)**:
-  - **󰌪 Eco**: Low fan noise, power-saver thermal mode, minimal RPM, quiet acoustics for office work and battery saving.
-  - **󰓅 Medium**: Balanced fan curve and power profile for everyday multitasking.
-  - **󰓦 Max Turbo**: 100% cooling duty and performance profile for intense gaming, compiling, and heavy workloads.
-- 🎛️ **Manual Speed Control ("Our Own Speed")**:
-  - Interactive slider from **15% to 100%** fan duty.
+  - **󰌪 Eco**: Whisper-quiet acoustics, power-saver thermal mode, minimal fan RPM for battery saving and quiet environments.
+  - **󰓅 Medium**: Balanced fan curve and power profile for smooth multitasking.
+  - **󰓦 Max Turbo**: 100% cooling duty blast (~5,400+ RPM) and performance profile for intense gaming, compiling, and heavy workloads.
+- 🎛️ **Manual Speed Control**:
+  - Precision slider from **15% to 100%** fan duty.
   - Quick-jump preset chips: `25%`, `50%`, `75%`, `100%`.
-  - Sets exact fan PWM duty (where hardware permits) and switches system power profiles dynamically.
-- 🌡️ **Smart Temperature Auto-Regulation ("Maintain Normal Temp")**:
-  - Configurable **Target Normal Temperature** slider (45°C - 75°C, default 60°C).
-  - Built-in closed-loop regulator actively monitors thermals every 2 seconds:
-    - If temperature exceeds Target + 2°C: Automatically elevates cooling to actively bring temperatures back down to target.
-    - If temperature reaches Critical (>= 80°C): Triggers emergency Max Turbo cooling to protect hardware.
-    - If temperature cools down to <= Target - 4°C: Automatically relaxes fan duty into quiet Eco mode.
-    - Built-in hysteresis prevents noisy cycling and fan hunting.
-- 🖥️ **Status Bar Telemetry**:
-  - Live bar readout: `󰈐 3.6k/3.3k · 54°C` (primary fan, secondary fan, CPU temperature).
-  - Dynamic color coding:
-    - Subtle Cyan: Eco mode
-    - Theme Foreground: Normal / Balanced
-    - Orange: Elevated thermals (> 68°C)
-    - Urgent Red: Critical thermals (>= 80°C)
-  - Left-click: Toggles interactive popup panel.
-  - Right-click: Quick-cycles through presets (`Eco` → `Medium` → `Max` → `Auto`).
-  - Hover: Shows detailed multi-line tooltip with dual fan RPMs and temperatures.
+  - Sets hardware PWM duty (on desktop motherboards & controllable laptop fan chips) and adjusts platform power profiles.
+- 🌡️ **Smart Temperature Auto-Maintainer ("Maintain Normal Temp")**:
+  - Interactive **Target Normal Temperature** slider (45°C - 75°C, default 60°C).
+  - Built-in closed-loop regulator actively monitors thermals:
+    - If temperature exceeds Target + 2°C: Automatically engages cooling to bring temperature down.
+    - If temperature reaches Critical (≥ 80°C): Triggers emergency Max Turbo cooling to protect hardware.
+    - If temperature is comfortably below target: Relaxes fans into quiet operation.
+    - Built-in hysteresis prevents noisy fan hunting.
+- 📊 **Status Bar Telemetry**:
+  - Live readout: `󰈐 3.6k/3.3k · 54°C` (primary fan, secondary fan, and temperature).
+  - Dynamic temperature glyph coloring (Eco Cyan, Balanced Foreground, Warm Orange, Critical Urgent Red).
+  - **Left-Click**: Toggles interactive control panel.
+  - **Right-Click**: Quick cycles modes (`Eco` → `Medium` → `Max` → `Auto`).
+  - **Hover Tooltip**: Displays detailed multi-line status and sensor telemetry.
 
-## CLI & IPC Usage
+---
 
-You can control and query the plugin directly from terminal or scripts:
+## Installation
+
+Install directly using the Omarchy CLI:
 
 ```bash
-# View JSON status with all fans, thermals, and current mode
-~/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py status
-
-# Switch to Eco mode
-~/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py set-mode eco
-
-# Switch to Medium (Balanced) mode
-~/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py set-mode medium
-
-# Switch to Max Turbo mode
-~/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py set-mode max
-
-# Set manual fan speed percentage (e.g. 75%)
-~/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py set-speed 75
-
-# Set target normal temperature auto-regulation (e.g. 60°C)
-~/.config/omarchy/plugins/io.github.mittai17.fan-control/fanctl.py set-auto 60
-
-# Shell IPC Toggle
-omarchy-shell io.github.mittai17.fan-control toggle
+omarchy plugin add https://github.com/mittai17/omarchy-fan-control --enable
 ```
 
-## Bar Layout Configuration
-
-The widget is placed on the Omarchy status bar:
+Place on your Omarchy status bar:
 
 ```bash
-# Place on the bar
 omarchy bar put io.github.mittai17.fan-control --after io.github.grootaiinfinity.hwmon
-
-# Move section if desired
-omarchy bar move io.github.mittai17.fan-control --section right
 ```
+
+*(You can also place or reorder it anywhere on your bar using `omarchy bar move io.github.mittai17.fan-control --section right`)*
+
+---
+
+## Removal
+
+Remove via the Omarchy CLI:
+
+```bash
+omarchy plugin remove io.github.mittai17.fan-control
+```
+
+### Manual Removal
+
+1. Remove the plugin directory:
+```bash
+rm -rf ~/.config/omarchy/plugins/io.github.mittai17.fan-control
+```
+
+2. Remove `"id": "io.github.mittai17.fan-control"` from your bar layout in `~/.config/omarchy/shell.json`.
+
+3. Restart the Omarchy shell:
+```bash
+omarchy restart shell
+```
+
+---
+
+## Requirements & External Dependencies
+
+- **Omarchy 4.x** with **Quickshell**
+- **Python 3** (`python3` standard library, no external pip packages required)
+- Linux **hwmon** sysfs (`/sys/class/hwmon/`, included in standard Linux kernels)
+- Optional: `power-profiles-daemon` (`powerprofilesctl`) or ACPI platform profile kernel driver for system-wide performance profile switching.
+
+---
+
+## Hardware Fan Note (Laptop PWM Permissions)
+
+On some gaming laptops (such as HP Omen/Victus or ASUS ROG), the Linux kernel defaults hardware PWM nodes (`pwm1_enable` or `pwm1`) to root-only write permissions. The included optional helper script installs a simple udev rule so you can control fan speeds without sudo prompts:
+
+```bash
+sudo ~/.config/omarchy/plugins/io.github.mittai17.fan-control/setup-fan-permissions.sh
+```
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 mittai17
