@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.mittai17.fan-control",
+  "name": "Fan & Thermal Control",
+  "version": "1.0.0",
+  "author": "mittai17",
+  "description": "Laptop & desktop CPU/GPU fan speed control and thermal monitoring. Features 3-level quick modes (Eco, Medium, Max), manual speed slider, and intelligent closed-loop temperature auto-regulation to maintain normal system temperatures.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Fan & Thermal Control",
+    "description": "Laptop & desktop CPU/GPU fan speed control with Eco/Medium/Max presets, manual slider, and auto-temp regulation.",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "showDualFans": true,
+      "showTemp": true
+    }
+  }
+}
