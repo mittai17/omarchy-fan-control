@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 fanctl.py - Hardware Fan & Thermal Controller Backend for Omarchy
-Supports laptops (HP, Lenovo, ASUS, Dell, etc.) and desktops.
+Supports laptops (HP, Lenovo, ASUS, Dell, Framework, etc.) and desktops.
 Provides:
   - 3 Simple Levels: Eco, Medium, Max
-  - Manual Speed Control (0-100%)
+  - Manual Speed Control (15-100%)
   - Smart Closed-Loop Temperature Auto-Regulation ("Maintain Normal Temp")
 """
 
@@ -50,9 +50,9 @@ def save_config(cfg):
         print(f"Error saving config: {e}", file=sys.stderr)
 
 def get_platform_profile():
-    # Try powerprofilesctl first
+    # Try powerprofilesctl
     try:
-        res = subprocess.run(["powerprofilesctl", "get"], capture_output=True, text=True, timeout=2)
+        res = subprocess.run(["powerprofilesctl", "get"], capture_output=True, text=True, timeout=1)
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     except Exception:
@@ -66,11 +66,10 @@ def get_platform_profile():
     except Exception:
         pass
 
-    return "unknown"
+    return "balanced"
 
 def set_platform_profile(profile):
-    """Sets system thermal/fan platform profile via powerprofilesctl or sysfs."""
-    # Profile mapping for powerprofilesctl: power-saver, balanced, performance
+    """Sets system thermal/fan platform profile via omarchy-powerprofiles-set or powerprofilesctl."""
     target_ppc = "balanced"
     if profile in ("power-saver", "quiet", "cool", "eco"):
         target_ppc = "power-saver"
@@ -79,7 +78,15 @@ def set_platform_profile(profile):
     else:
         target_ppc = "balanced"
 
-    # Try powerprofilesctl
+    # Use Omarchy native tool first
+    try:
+        subprocess.run(["omarchy-powerprofiles-set", "ac", target_ppc], capture_output=True, timeout=2)
+        subprocess.run(["omarchy-powerprofiles-set", "battery", target_ppc], capture_output=True, timeout=2)
+        return True
+    except Exception:
+        pass
+
+    # Direct powerprofilesctl fallback
     try:
         res = subprocess.run(["powerprofilesctl", "set", target_ppc], capture_output=True, text=True, timeout=2)
         if res.returncode == 0:
@@ -87,49 +94,69 @@ def set_platform_profile(profile):
     except Exception:
         pass
 
-    # Try direct sysfs if powerprofilesctl failed
-    p = Path("/sys/firmware/acpi/platform_profile")
-    if p.exists():
-        for candidate in [profile, target_ppc, "quiet" if target_ppc == "power-saver" else target_ppc]:
-            try:
-                p.write_text(candidate)
-                return True
-            except Exception:
-                pass
     return False
 
 def get_pwm_controllers():
-    """Detect any direct hardware PWM fan controls in sysfs (common on desktops)."""
-    pwms = []
+    """Detect any hardware PWM controls or enable switches in sysfs."""
+    controllers = []
     for hw in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        # Check for direct duty cycle pwm[1-9]
         for pwm_file in sorted(glob.glob(f"{hw}/pwm[1-9]")):
             enable_file = f"{pwm_file}_enable"
-            is_writable = os.access(pwm_file, os.W_OK)
-            pwms.append({
-                "pwm_file": pwm_file,
+            controllers.append({
+                "type": "pwm_duty",
+                "file": pwm_file,
                 "enable_file": enable_file if os.path.exists(enable_file) else None,
-                "writable": is_writable
+                "writable": os.access(pwm_file, os.W_OK)
             })
-    return pwms
 
-def set_hardware_pwm(pct):
-    """Set raw PWM duty cycle (0-255) if hardware allows it."""
-    pwms = get_pwm_controllers()
-    if not pwms:
+        # Check for standalone pwm[1-9]_enable (like HP-WMI / ACPI fan)
+        for enable_file in sorted(glob.glob(f"{hw}/pwm[1-9]_enable")):
+            base_pwm = enable_file.replace("_enable", "")
+            if not os.path.exists(base_pwm):
+                controllers.append({
+                    "type": "pwm_enable_only",
+                    "file": enable_file,
+                    "writable": os.access(enable_file, os.W_OK)
+                })
+    return controllers
+
+def set_hardware_fans(mode_name, pct=60):
+    """
+    Directly writes to hardware fan controller nodes:
+      - HP / ACPI laptops: pwm1_enable: 0 = Max Turbo (100%), 2 = Auto thermal curve
+      - Desktop motherboards: pwm[1-9]: 0 - 255
+    """
+    controllers = get_pwm_controllers()
+    if not controllers:
         return False
-    val = max(0, min(255, int(pct * 2.55)))
+
     success = False
-    for p in pwms:
-        if p["writable"]:
+    for c in controllers:
+        if c["type"] == "pwm_enable_only":
+            enable_file = c["file"]
             try:
-                if p["enable_file"] and os.access(p["enable_file"], os.W_OK):
-                    with open(p["enable_file"], "w") as f:
-                        f.write("1\n") # 1 = manual control
-                with open(p["pwm_file"], "w") as f:
-                    f.write(f"{val}\n")
+                # 0 = Max Turbo / 100%, 2 = Auto curve
+                target_val = "0\n" if (mode_name == "max" or (mode_name == "manual" and pct >= 80)) else "2\n"
+                with open(enable_file, "w") as f:
+                    f.write(target_val)
                 success = True
             except Exception:
                 pass
+
+        elif c["type"] == "pwm_duty":
+            val = max(0, min(255, int(pct * 2.55)))
+            try:
+                if c["enable_file"] and os.access(c["enable_file"], os.W_OK):
+                    with open(c["enable_file"], "w") as f:
+                        f.write("1\n" if mode_name == "manual" else ("0\n" if mode_name == "max" else "2\n"))
+                if c["writable"]:
+                    with open(c["file"], "w") as f:
+                        f.write(f"{val}\n")
+                success = True
+            except Exception:
+                pass
+
     return success
 
 def read_fans():
@@ -184,12 +211,9 @@ def read_fans():
             else:
                 other_fans.append(item)
 
-    # Prioritize active/vendor fans
     all_fans = hp_fans + other_fans
-    # Filter out inactive zero-RPM duplicate dummy fans if active fans exist
     active_fans = [f for f in all_fans if f["rpm"] > 0]
-    result = active_fans if active_fans else all_fans
-    return result
+    return active_fans if active_fans else all_fans
 
 def read_temperatures():
     """Read temperatures from CPU, GPU, NVMe, and thermal zones."""
@@ -216,7 +240,7 @@ def read_temperatures():
             except Exception:
                 continue
 
-            if celsius < 0 or celsius > 150: # Sanity filter
+            if celsius < 0 or celsius > 150:
                 continue
 
             label = tid
@@ -232,17 +256,17 @@ def read_temperatures():
             if celsius > max_temp:
                 max_temp = celsius
 
-            # Identify CPU
+            # CPU identification
             if hw_name in ("coretemp", "k10temp", "zenpower") or "Package id 0" in label or "x86_pkg_temp" in label:
                 if cpu_temp is None or "Package id 0" in label:
                     cpu_temp = round(celsius, 1)
 
-            # Identify GPU
+            # GPU identification
             if "gpu" in hw_name.lower() or "amdgpu" in hw_name.lower() or "nouveau" in hw_name.lower():
                 if gpu_temp is None or "edge" in label.lower():
                     gpu_temp = round(celsius, 1)
 
-    # 2. NVIDIA GPU via nvidia-smi if discrete GPU present
+    # 2. NVIDIA GPU fallback
     if gpu_temp is None:
         try:
             res = subprocess.run(
@@ -256,7 +280,7 @@ def read_temperatures():
         except Exception:
             pass
 
-    # 3. Fallback from thermal zones if CPU temp wasn't matched
+    # 3. ACPI thermal zone fallback
     if cpu_temp is None:
         for tz in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
             try:
@@ -284,27 +308,22 @@ def read_temperatures():
 
 def apply_mode(mode_name, manual_speed=60):
     """
-    Applies fan & power state according to the requested mode:
-      - 'eco': Whisper quiet / power saver, minimal fan RPM
-      - 'medium': Balanced cooling for everyday use
-      - 'max': 100% full fan cooling / turbo performance
-      - 'manual': Custom user-chosen percentage
+    Applies fan & power state according to requested mode.
     """
     if mode_name == "eco":
         set_platform_profile("power-saver")
-        set_hardware_pwm(25)
+        set_hardware_fans("eco", 25)
         return "power-saver"
     elif mode_name == "medium":
         set_platform_profile("balanced")
-        set_hardware_pwm(55)
+        set_hardware_fans("medium", 55)
         return "balanced"
     elif mode_name == "max":
         set_platform_profile("performance")
-        set_hardware_pwm(100)
+        set_hardware_fans("max", 100)
         return "performance"
     elif mode_name == "manual":
-        # Map manual speed percentage
-        pct = max(0, min(100, int(manual_speed)))
+        pct = max(15, min(100, int(manual_speed)))
         if pct < 35:
             profile = "power-saver"
         elif pct <= 75:
@@ -312,21 +331,18 @@ def apply_mode(mode_name, manual_speed=60):
         else:
             profile = "performance"
         set_platform_profile(profile)
-        set_hardware_pwm(pct)
+        set_hardware_fans("manual", pct)
         return profile
     return "balanced"
 
 def evaluate_smart_auto(cfg, current_temp):
     """
-    Smart Closed-Loop Temperature Maintainer:
-    Keeps temperature around target_temp (default 60°C).
-    Uses hysteresis to prevent oscillating.
+    Smart Closed-Loop Temperature Maintainer.
     """
     target = cfg.get("target_temp", 60)
     crit = cfg.get("crit_temp", 80)
     last_mode = cfg.get("last_applied_mode", "balanced")
 
-    # Critical thermal threshold: force Max Turbo
     if current_temp >= crit:
         apply_mode("max")
         cfg["last_applied_mode"] = "performance"
@@ -338,7 +354,6 @@ def evaluate_smart_auto(cfg, current_temp):
             "state": "Critical"
         }
 
-    # Temperature above target + 2°C: Ramp up cooling
     if current_temp > (target + 2):
         if current_temp > (target + 10):
             apply_mode("max")
@@ -360,7 +375,6 @@ def evaluate_smart_auto(cfg, current_temp):
             "state": state
         }
 
-    # Temperature comfortably below target - 4°C: Relax fans to quiet/eco
     if current_temp <= (target - 4):
         apply_mode("eco")
         cfg["last_applied_mode"] = "power-saver"
@@ -372,7 +386,6 @@ def evaluate_smart_auto(cfg, current_temp):
             "state": "Eco"
         }
 
-    # Within normal band: keep balanced
     if last_mode != "balanced":
         apply_mode("medium")
         cfg["last_applied_mode"] = "balanced"
@@ -390,11 +403,9 @@ def get_status():
     thermals = read_temperatures()
     profile = get_platform_profile()
 
-    # Identify primary and secondary fan
     primary_fan = fans[0] if fans else {"label": "Fan 1", "rpm": 0}
     secondary_fan = fans[1] if len(fans) > 1 else None
 
-    # Calculate estimated fan percentage (assuming ~5500-6000 max RPM standard laptop fan)
     max_estimated_rpm = 5800
     for f in fans:
         f["pct"] = min(100, int((f["rpm"] / max_estimated_rpm) * 100))
@@ -404,7 +415,6 @@ def get_status():
     manual_speed = cfg.get("manual_speed", 60)
     cur_temp = thermals["cpu_temp"]
 
-    # Thermal status description
     if cur_temp >= cfg.get("crit_temp", 80):
         thermal_state = "Critical"
         thermal_state_desc = f"Critical Heat: {cur_temp}°C (Emergency Turbo Active)"
@@ -435,6 +445,10 @@ def get_status():
         thermal_state = "Normal"
         thermal_state_desc = f"{cur_temp}°C"
 
+    # Check hardware control write access
+    controllers = get_pwm_controllers()
+    has_pwm_write_access = any(c.get("writable", False) for c in controllers)
+
     return {
         "fans": fans,
         "primary_label": primary_fan["label"],
@@ -453,13 +467,15 @@ def get_status():
         "thermal_state": thermal_state,
         "thermal_state_desc": thermal_state_desc,
         "active_profile": profile,
+        "has_pwm_write_access": has_pwm_write_access,
         "timestamp": int(time.time())
     }
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("status", "json"):
         st = get_status()
-        print(json.dumps(st, indent=2))
+        # Always output compact single-line JSON for reliable SplitParser consumption
+        print(json.dumps(st))
         return
 
     cmd = sys.argv[1]
@@ -470,7 +486,7 @@ def main():
             sys.exit(1)
         mode = sys.argv[2].lower()
         if mode not in ("eco", "medium", "max", "auto", "manual"):
-            print(f"Unknown mode: {mode}. Use eco, medium, max, auto, or manual.", file=sys.stderr)
+            print(f"Unknown mode: {mode}", file=sys.stderr)
             sys.exit(1)
 
         cfg = load_config()
@@ -492,9 +508,9 @@ def main():
             print("Usage: fanctl.py set-speed <0-100>", file=sys.stderr)
             sys.exit(1)
         try:
-            speed = max(0, min(100, int(sys.argv[2])))
+            speed = max(15, min(100, int(sys.argv[2])))
         except ValueError:
-            print("Speed must be an integer 0-100", file=sys.stderr)
+            print("Speed must be an integer", file=sys.stderr)
             sys.exit(1)
 
         cfg = load_config()
@@ -528,20 +544,7 @@ def main():
             res = evaluate_smart_auto(cfg, thermals["cpu_temp"])
             print(json.dumps({"success": True, "mode": "auto", "evaluation": res}))
         else:
-            print(json.dumps({"success": True, "mode": mode, "status": "no_auto_tick_needed"}))
-
-    elif cmd == "daemon":
-        # Optional background daemon loop
-        print("Starting fanctl thermal maintenance daemon...")
-        while True:
-            try:
-                cfg = load_config()
-                if cfg.get("mode") == "auto":
-                    thermals = read_temperatures()
-                    evaluate_smart_auto(cfg, thermals["cpu_temp"])
-            except Exception as e:
-                print(f"Daemon error: {e}", file=sys.stderr)
-            time.sleep(3)
+            print(json.dumps({"success": True, "mode": mode}))
 
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)

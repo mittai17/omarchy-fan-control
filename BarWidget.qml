@@ -30,7 +30,8 @@ BarWidget {
   property int targetTemp: Number(statusData.target_temp) || 60
   property string thermalState: statusData.thermal_state || "Normal"
   property string thermalStateDesc: statusData.thermal_state_desc || ""
-  property string activeProfile: statusData.active_profile || ""
+  property string activeProfile: statusData.active_profile || "balanced"
+  property bool hasPwmWriteAccess: statusData.has_pwm_write_access === true
 
   // Panel management
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
@@ -69,25 +70,25 @@ BarWidget {
     function setAuto(): void { root.setAuto(root.targetTemp) }
   }
 
-  // Backend command execution
+  // Backend command execution with explicit python interpreter
   function setMode(newMode) {
     root.mode = newMode
-    Quickshell.execDetached([root.scriptPath, "set-mode", newMode])
-    refreshTimer.restart()
+    Quickshell.execDetached(["/usr/bin/python3", root.scriptPath, "set-mode", newMode])
+    triggerRefresh()
   }
 
   function setSpeed(speedPct) {
     root.mode = "manual"
     root.manualSpeed = speedPct
-    Quickshell.execDetached([root.scriptPath, "set-speed", String(speedPct)])
-    refreshTimer.restart()
+    Quickshell.execDetached(["/usr/bin/python3", root.scriptPath, "set-speed", String(speedPct)])
+    triggerRefresh()
   }
 
   function setAuto(target) {
     root.mode = "auto"
     root.targetTemp = target
-    Quickshell.execDetached([root.scriptPath, "set-auto", String(target)])
-    refreshTimer.restart()
+    Quickshell.execDetached(["/usr/bin/python3", root.scriptPath, "set-auto", String(target)])
+    triggerRefresh()
   }
 
   function cyclePresetMode() {
@@ -97,15 +98,22 @@ BarWidget {
     else setMode("eco")
   }
 
-  // Periodic Status Sampling Process
+  function triggerRefresh() {
+    if (!sampler.running) {
+      sampler.running = true
+    }
+  }
+
+  // Live polling via SplitParser (single-line JSON per run)
   Process {
-    id: statusProc
-    command: [root.scriptPath, "status"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: function(text) {
+    id: sampler
+    command: ["/usr/bin/python3", root.scriptPath, "status"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var str = String(line).trim()
+        if (str.length === 0 || str.charAt(0) !== "{") return
         try {
-          var data = JSON.parse(text)
+          var data = JSON.parse(str)
           if (data && typeof data === "object") {
             root.statusData = data
           }
@@ -120,9 +128,7 @@ BarWidget {
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: {
-      if (!statusProc.running) statusProc.running = true
-    }
+    onTriggered: root.triggerRefresh()
   }
 
   // Visual formatting
@@ -134,9 +140,9 @@ BarWidget {
 
   readonly property color glyphColor: {
     if (root.maxTemp >= 80) return bar ? bar.urgent : Color.urgent
-    if (root.mode === "eco") return "#73daca" // Teal/cyan for eco
-    if (root.mode === "max") return "#f7768e" // Reddish for max turbo
-    if (root.maxTemp >= 68) return "#ff9e64" // Orange for warm
+    if (root.mode === "eco") return "#73daca"
+    if (root.mode === "max") return "#f7768e"
+    if (root.maxTemp >= 68) return "#ff9e64"
     return bar ? bar.barForeground : Color.foreground
   }
 
@@ -174,7 +180,6 @@ BarWidget {
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(5)
 
-    // Fan icon (rotates slightly on fast RPM or displays glyph)
     Text {
       id: fanGlyph
       anchors.verticalCenter: parent.verticalCenter
@@ -186,7 +191,6 @@ BarWidget {
       Behavior on color { ColorAnimation { duration: 180 } }
     }
 
-    // Readings Text
     Text {
       id: fanText
       anchors.verticalCenter: parent.verticalCenter
