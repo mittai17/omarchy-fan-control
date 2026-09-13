@@ -548,49 +548,6 @@ Panel {
               }
             }
           }
-
-          // Info hint if direct PWM permission is not installed yet
-          Rectangle {
-            visible: !root.hasPwmWriteAccess
-            width: parent.width
-            implicitHeight: permNoticeCol.implicitHeight + Style.space(10)
-            radius: Style.cornerRadius
-            color: "#181a26"
-            border.width: Style.spacing.hairline
-            border.color: "#33ffffff"
-
-            Column {
-              id: permNoticeCol
-              anchors.fill: parent
-              anchors.margins: Style.space(6)
-              spacing: Style.space(3)
-
-              Text {
-                text: "💡 Tip for Direct Fan PWM Control:"
-                color: Color.accent
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
-              Text {
-                text: "Run once in terminal to enable passwordless direct fan control:"
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.Wrap
-                width: parent.width
-              }
-              Text {
-                text: "sudo ~/.config/omarchy/plugins/io.github.mittai17.fan-control/setup-fan-permissions.sh"
-                color: "#7aa2f7"
-                font.family: "monospace"
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                wrapMode: Text.Wrap
-                width: parent.width
-              }
-            }
-          }
         }
       }
 

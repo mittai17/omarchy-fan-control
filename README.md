@@ -88,13 +88,9 @@ omarchy restart shell
 
 ---
 
-## Hardware Fan Note (Laptop PWM Permissions)
+## Permissions & Security
 
-On some gaming laptops (such as HP Omen/Victus or ASUS ROG), the Linux kernel defaults hardware PWM nodes (`pwm1_enable` or `pwm1`) to root-only write permissions. The included optional helper script installs a simple udev rule so you can control fan speeds without sudo prompts:
-
-```bash
-sudo ~/.config/omarchy/plugins/io.github.mittai17.fan-control/setup-fan-permissions.sh
-```
+No sudo or pkexec is required. The plugin operates completely unprivileged, reading real-time telemetry from standard Linux `/sys/class/hwmon/` interfaces and controlling performance profiles through standard user-level ACPI platform profiles (`powerprofilesctl`).
 
 ---
 
